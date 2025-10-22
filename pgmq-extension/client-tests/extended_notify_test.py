@@ -1,5 +1,5 @@
 """
-PGMQ Notification Mechanism Test Suite
+PGMQ Extended Notification Tests
 
 This test suite comprehensively tests the PostgreSQL PGMQ notification mechanism,
 which allows clients to be notified when new messages are inserted into queues.
@@ -25,6 +25,11 @@ The notification mechanism works as follows:
 2. Client listens to the PostgreSQL NOTIFY channel (pgmq.q_{queue_name}.INSERT)
 3. When messages are inserted, notifications are sent (subject to throttling)
 4. Throttling prevents excessive notifications when many messages arrive rapidly
+
+Run tests with:
+    pytest extended_notify_test.py -v
+    or
+    uv run pytest extended_notify_test.py -v
 """
 
 import json
@@ -33,6 +38,17 @@ import time
 
 import psycopg
 import pytest
+
+@pytest.fixture
+def db_connection():
+    """Create database connection using DATABASE_URL environment variable."""
+    database_url = os.getenv(
+        "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres"
+    )
+
+    conn = psycopg.Connection.connect(database_url, autocommit=True)
+    yield conn
+    conn.close()
 
 
 def listen_for_notification(
@@ -69,18 +85,6 @@ def count_notifications(
         # Timeout reached, return count
         pass
     return count
-
-
-@pytest.fixture
-def db_connection():
-    """Create database connection using DATABASE_URL environment variable."""
-    database_url = os.getenv(
-        "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres"
-    )
-
-    conn = psycopg.Connection.connect(database_url, autocommit=True)
-    yield conn
-    conn.close()
 
 
 # Helper functions to reduce code duplication
