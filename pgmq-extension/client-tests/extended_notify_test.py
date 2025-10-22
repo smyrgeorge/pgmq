@@ -12,6 +12,7 @@ Tests cover:
 - Dynamic throttle interval changes
 - Idempotent operations (safe to call multiple times)
 - Input validation (rejecting negative throttle values)
+- Cleanup: drop_queue() removes entries from notify_insert_throttle table
 
 IMPORTANT NOTES:
 - These tests are for TESTING PURPOSES ONLY and demonstrate functionality
@@ -449,6 +450,36 @@ def test_negative_throttle_validation(db_connection: psycopg.Connection):
     finally:
         drop_queue(db_connection, queue_name)
 
+
+def test_drop_queue_cleans_throttle_table(db_connection: psycopg.Connection):
+    """Test that dropping a queue removes its entry from notify_insert_throttle table."""
+    now = int(time.time())
+    queue_name = f"test_drop_cleanup_{now}"
+
+    try:
+        create_queue(db_connection, queue_name)
+
+        # Enable notifications to create entry in notify_insert_throttle
+        throttle_ms = 1000
+        enable_notifications(db_connection, queue_name, throttle_ms=throttle_ms)
+
+        # Verify entry exists in notify_insert_throttle
+        count = count_throttle_entries(db_connection, queue_name)
+        assert count == 1, f"Expected 1 entry in notify_insert_throttle, got {count}"
+        print(f"Verified: entry exists in notify_insert_throttle before drop")
+
+        # Drop the queue
+        drop_queue(db_connection, queue_name)
+
+        # Verify entry is deleted from notify_insert_throttle
+        count = count_throttle_entries(db_connection, queue_name)
+        assert count == 0, f"Expected 0 entries in notify_insert_throttle after drop, got {count}"
+        print(f"Verified: entry removed from notify_insert_throttle after drop")
+
+        print("Test passed: drop_queue cleans up notify_insert_throttle table")
+
+    finally:
+        drop_queue(db_connection, queue_name)
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

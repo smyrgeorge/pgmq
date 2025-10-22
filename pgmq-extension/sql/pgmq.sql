@@ -688,6 +688,9 @@ BEGIN
         );
      END IF;
 
+     -- Clean up notification configuration if exists
+     DELETE FROM pgmq.notify_insert_throttle WHERE notify_insert_throttle.queue_name = drop_queue.queue_name;
+
     RETURN TRUE;
 END;
 $$ LANGUAGE plpgsql;
