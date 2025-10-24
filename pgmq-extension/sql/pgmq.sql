@@ -1169,7 +1169,7 @@ RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION pgmq.enable_notify_insert(queue_name TEXT, throttle_interval_ms INTEGER)
+CREATE OR REPLACE FUNCTION pgmq.enable_notify_insert(queue_name TEXT, throttle_interval_ms INTEGER DEFAULT 250)
 RETURNS void AS $$
 DECLARE
   qtable TEXT := pgmq.format_table_name(queue_name, 'q');
@@ -1203,16 +1203,6 @@ BEGIN
     $QUERY$,
     qtable
   );
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION pgmq.enable_notify_insert(queue_name TEXT)
-RETURNS void AS $$
-DECLARE
-  v_queue_name TEXT := queue_name;
-BEGIN
-  -- Default throttle interval is 250ms
-  PERFORM pgmq.enable_notify_insert(v_queue_name, 250);
 END;
 $$ LANGUAGE plpgsql;
 
