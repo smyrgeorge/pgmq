@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS pgmq.meta (
 CREATE TABLE IF NOT EXISTS pgmq.notify_insert_throttle (
     queue_name           VARCHAR UNIQUE NOT NULL,    -- Queue name (without 'q_' prefix)
     throttle_interval_ms INTEGER NOT NULL DEFAULT 0, -- Min milliseconds between notifications (0 = no throttling)
-    last_notified_at     TIMESTAMP WITH TIME ZONE    -- Timestamp of last sent notification (NULL if never notified)
+    last_notified_at     TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT to_timestamp(0) -- Timestamp of last sent notification
 );
 
 CREATE INDEX IF NOT EXISTS idx_notify_throttle_active
@@ -1154,7 +1154,6 @@ BEGIN
   WHERE queue_name = queue_name_extracted
     AND (
       throttle_interval_ms = 0 -- No throttling configured
-          OR last_notified_at IS NULL -- Never notified before
           OR clock_timestamp() - last_notified_at >=
              (throttle_interval_ms * INTERVAL '1 millisecond') -- Throttle interval has elapsed
     );
@@ -1189,11 +1188,11 @@ BEGIN
 
   PERFORM pgmq.disable_notify_insert(v_queue_name);
 
-  INSERT INTO pgmq.notify_insert_throttle (queue_name, throttle_interval_ms, last_notified_at)
-  VALUES (v_queue_name, v_throttle_interval_ms, NULL)
+  INSERT INTO pgmq.notify_insert_throttle (queue_name, throttle_interval_ms)
+  VALUES (v_queue_name, v_throttle_interval_ms)
   ON CONFLICT ON CONSTRAINT notify_insert_throttle_queue_name_key DO UPDATE
       SET throttle_interval_ms = EXCLUDED.throttle_interval_ms,
-          last_notified_at = NULL;
+          last_notified_at = to_timestamp(0);
 
   EXECUTE FORMAT(
     $QUERY$
