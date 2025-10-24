@@ -250,7 +250,7 @@ def test_enable_notify_variations(db_connection: psycopg.Connection):
         # Test 1: enable_notify_insert(queue_name) - no throttle parameter
         create_queue(db_connection, queue_name_no_param)
         enable_notifications(db_connection, queue_name_no_param)
-        verify_throttle_interval(db_connection, queue_name_no_param, 0)
+        verify_throttle_interval(db_connection, queue_name_no_param, 250) # 250ms default
 
         # Test 2: enable_notify_insert(queue_name, 0) - explicit zero
         create_queue(db_connection, queue_name_with_zero)
