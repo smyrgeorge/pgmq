@@ -1211,7 +1211,8 @@ RETURNS void AS $$
 DECLARE
   v_queue_name TEXT := queue_name;
 BEGIN
-  PERFORM pgmq.enable_notify_insert(v_queue_name, 0);
+  -- Default throttle interval is 250ms
+  PERFORM pgmq.enable_notify_insert(v_queue_name, 250);
 END;
 $$ LANGUAGE plpgsql;
 
