@@ -62,7 +62,7 @@ BEGIN
   VALUES (v_queue_name, v_throttle_interval_ms)
   ON CONFLICT ON CONSTRAINT notify_insert_throttle_queue_name_key DO UPDATE
        SET throttle_interval_ms = EXCLUDED.throttle_interval_ms,
-       last_notified_at = to_timestamp(0);
+           last_notified_at = to_timestamp(0);
 
   EXECUTE FORMAT(
     $QUERY$
