@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS pgmq.notify_insert_throttle (
     queue_name           VARCHAR UNIQUE NOT NULL,    -- Queue name (without 'q_' prefix)
     throttle_interval_ms INTEGER NOT NULL DEFAULT 0, -- Min milliseconds between notifications (0 = no throttling)
-    ast_notified_at     TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT to_timestamp(0) -- Timestamp of last sent notification
+    last_notified_at     TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT to_timestamp(0) -- Timestamp of last sent notification
 );
 
 CREATE INDEX IF NOT EXISTS idx_notify_throttle_active

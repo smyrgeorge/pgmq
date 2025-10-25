@@ -50,7 +50,7 @@ def test_pgmq_basic_notification(db_connection: psycopg.Connection):
     # enable notifications
     with db_connection.cursor() as cur:
         cur.execute("SELECT pgmq.enable_notify_insert(%s)", (queue_name,))
-    # subsequent calls must not erorr
+    # subsequent calls must not error
     with db_connection.cursor() as cur:
         cur.execute("SELECT pgmq.enable_notify_insert(%s)", (queue_name,))
 
@@ -84,7 +84,7 @@ def test_pgmq_basic_notification(db_connection: psycopg.Connection):
     # disable notification subscription
     with db_connection.cursor() as cur:
         cur.execute("SELECT pgmq.disable_notify_insert(%s)", (queue_name,))
-    # subsequent calls must not erorr
+    # subsequent calls must not error
     with db_connection.cursor() as cur:
         cur.execute("SELECT pgmq.disable_notify_insert(%s)", (queue_name,))
 
