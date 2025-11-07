@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS pgmq.meta (
 
 -- Table to track notification throttling for queues
 CREATE UNLOGGED TABLE IF NOT EXISTS pgmq.notify_insert_throttle (
-    queue_name           VARCHAR UNIQUE NOT NULL     -- Queue name (without 'q_' prefix)
+    queue_name           VARCHAR UNIQUE NOT NULL -- Queue name (without 'q_' prefix)
        CONSTRAINT notify_insert_throttle_meta_queue_name_fk
             REFERENCES pgmq.meta (queue_name)
             ON DELETE CASCADE,
