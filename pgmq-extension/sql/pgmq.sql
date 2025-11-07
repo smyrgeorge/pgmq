@@ -22,8 +22,11 @@ CREATE TABLE IF NOT EXISTS pgmq.meta (
 );
 
 -- Table to track notification throttling for queues
-CREATE TABLE IF NOT EXISTS pgmq.notify_insert_throttle (
-    queue_name           VARCHAR UNIQUE NOT NULL,    -- Queue name (without 'q_' prefix)
+CREATE UNLOGGED TABLE IF NOT EXISTS pgmq.notify_insert_throttle (
+    queue_name           VARCHAR UNIQUE NOT NULL     -- Queue name (without 'q_' prefix)
+       CONSTRAINT notify_insert_throttle_meta_queue_name_fk
+            REFERENCES pgmq.meta (queue_name)
+            ON DELETE CASCADE,
     throttle_interval_ms INTEGER NOT NULL DEFAULT 0, -- Min milliseconds between notifications (0 = no throttling)
     last_notified_at     TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT to_timestamp(0) -- Timestamp of last sent notification
 );
@@ -687,9 +690,6 @@ BEGIN
           pgmq._get_pg_partman_schema(), fq_qtable, fq_atable
         );
      END IF;
-
-     -- Clean up notification configuration if exists
-     DELETE FROM pgmq.notify_insert_throttle WHERE notify_insert_throttle.queue_name = drop_queue.queue_name;
 
     RETURN TRUE;
 END;
