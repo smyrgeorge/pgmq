@@ -17,3 +17,5 @@ Usage: uv run pytest test.py -v
 from basic_notify_test import *
 # noinspection PyUnusedImports
 from extended_notify_test import *
+# noinspection PyUnusedImports
+from topics_test import *
