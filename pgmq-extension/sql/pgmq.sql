@@ -1584,7 +1584,7 @@ CREATE TABLE IF NOT EXISTS pgmq.topic_bindings
 (
     pattern        text NOT NULL, -- Wildcard pattern for routing key matching (* = one segment, # = zero or more segments)
     queue_name     text NOT NULL  -- Name of the queue that receives messages when pattern matches
-        CONSTRAINT notify_bindings_meta_queue_name_fk
+        CONSTRAINT topic_bindings_meta_queue_name_fk
             REFERENCES pgmq.meta (queue_name)
             ON DELETE CASCADE,
     compiled_regex text GENERATED ALWAYS AS (
@@ -1603,8 +1603,8 @@ CREATE TABLE IF NOT EXISTS pgmq.topic_bindings
 );
 
 -- Create covering index for better performance when scanning patterns
--- Includes queue_name to allow index-only scans (no table access needed)
-CREATE INDEX idx_topic_bindings_covering ON pgmq.topic_bindings (pattern) INCLUDE (queue_name);
+-- Includes queue_name and compiled_regex to allow index-only scans (no table access needed)
+CREATE INDEX IF NOT EXISTS idx_topic_bindings_covering ON pgmq.topic_bindings (pattern) INCLUDE (queue_name, compiled_regex);
 
 CREATE OR REPLACE FUNCTION pgmq.validate_routing_key(routing_key text)
     RETURNS boolean
@@ -1663,11 +1663,12 @@ AS
 $$
 BEGIN
     -- Valid pattern examples:
-    --   "logs.*"           - matches one segment after logs.
-    --   "logs.#"           - matches zero or more segments after logs.
-    --   "*.error"          - matches any.error
-    --   "#.error"          - matches error, x.error, x.y.error, etc.
-    --   "app.*.#"          - mixed wildcards (one segment then zero or more)
+    --   "logs.*"           - matches one segment after logs. (e.g., logs.error, logs.info)
+    --   "logs.#"           - matches one or more segments after logs. (e.g., logs.error, logs.api.error)
+    --   "*.error"          - matches one segment before .error (e.g., app.error, db.error)
+    --   "#.error"          - matches one or more segments before .error (e.g., app.error, x.y.error)
+    --   "app.*.#"          - mixed wildcards (one segment then one or more)
+    --   "#"                - catch-all pattern, matches any routing key
     --
     -- Invalid pattern examples:
     --   ".logs.*"          - starts with dot
@@ -1727,6 +1728,10 @@ BEGIN
     PERFORM pgmq.validate_topic_pattern(pattern);
     IF queue_name IS NULL OR queue_name = '' THEN
         RAISE EXCEPTION 'queue_name cannot be NULL or empty';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pgmq.meta WHERE meta.queue_name = bind_topic.queue_name) THEN
+        RAISE EXCEPTION 'Queue "%" does not exist. Create the queue first using pgmq.create()', queue_name;
     END IF;
 
     INSERT INTO pgmq.topic_bindings (pattern, queue_name)
@@ -1813,17 +1818,16 @@ BEGIN
         RAISE EXCEPTION 'delay cannot be negative, got: %', delay;
     END IF;
 
+    -- Filter matching patterns in SQL for better performance (uses index)
+    -- Any failure will rollback the entire transaction
     FOR b IN
-        SELECT compiled_regex, queue_name
-        FROM pgmq.topic_bindings
-        ORDER BY pattern -- Deterministic ordering
+        SELECT tb.queue_name
+        FROM pgmq.topic_bindings tb
+        WHERE routing_key ~ tb.compiled_regex
+        ORDER BY tb.pattern -- Deterministic ordering
         LOOP
-            -- Check if routing_key matches the pre-compiled regex pattern
-            IF routing_key ~ b.compiled_regex THEN
-                -- Send to matched queue (any failure will rollback the entire transaction)
-                PERFORM pgmq.send(b.queue_name, msg, headers, delay);
-                matched_count := matched_count + 1;
-            END IF;
+            PERFORM pgmq.send(b.queue_name, msg, headers, delay);
+            matched_count := matched_count + 1;
         END LOOP;
 
     RETURN matched_count;
