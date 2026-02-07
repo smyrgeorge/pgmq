@@ -155,8 +155,6 @@ BEGIN
     INSERT INTO pgmq.topic_bindings (pattern, queue_name)
     VALUES (pattern, queue_name)
     ON CONFLICT ON CONSTRAINT topic_bindings_unique_pattern_queue DO NOTHING;
-
-    RAISE NOTICE 'Topic binding created: pattern "%" -> queue "%"', pattern, queue_name;
 END;
 $$;
 
@@ -184,10 +182,8 @@ BEGIN
     GET DIAGNOSTICS rows_deleted = ROW_COUNT;
 
     IF rows_deleted > 0 THEN
-        RAISE NOTICE 'Topic binding removed: pattern "%" -> queue "%"', pattern, queue_name;
         RETURN true;
     ELSE
-        RAISE NOTICE 'No topic binding found for pattern "%" and queue "%"', pattern, queue_name;
         RETURN false;
     END IF;
 END;

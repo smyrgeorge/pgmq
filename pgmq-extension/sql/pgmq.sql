@@ -42,6 +42,7 @@ BEGIN
     IF EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pgmq') THEN
         PERFORM pg_catalog.pg_extension_config_dump('pgmq.meta', '');
         PERFORM pg_catalog.pg_extension_config_dump('pgmq.notify_insert_throttle', '');
+        PERFORM pg_catalog.pg_extension_config_dump('pgmq.topic_bindings', '');
     END IF;
 END
 $$;
@@ -1737,8 +1738,6 @@ BEGIN
     INSERT INTO pgmq.topic_bindings (pattern, queue_name)
     VALUES (pattern, queue_name)
     ON CONFLICT ON CONSTRAINT topic_bindings_unique_pattern_queue DO NOTHING;
-
-    RAISE NOTICE 'Topic binding created: pattern "%" -> queue "%"', pattern, queue_name;
 END;
 $$;
 
@@ -1766,10 +1765,8 @@ BEGIN
     GET DIAGNOSTICS rows_deleted = ROW_COUNT;
 
     IF rows_deleted > 0 THEN
-        RAISE NOTICE 'Topic binding removed: pattern "%" -> queue "%"', pattern, queue_name;
         RETURN true;
     ELSE
-        RAISE NOTICE 'No topic binding found for pattern "%" and queue "%"', pattern, queue_name;
         RETURN false;
     END IF;
 END;
