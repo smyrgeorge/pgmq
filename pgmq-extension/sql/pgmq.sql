@@ -35,6 +35,32 @@ CREATE INDEX IF NOT EXISTS idx_notify_throttle_active
     ON pgmq.notify_insert_throttle (queue_name, last_notified_at)
     WHERE throttle_interval_ms > 0;
 
+CREATE TABLE IF NOT EXISTS pgmq.topic_bindings
+(
+    pattern        text NOT NULL, -- Wildcard pattern for routing key matching (* = one segment, # = zero or more segments)
+    queue_name     text NOT NULL  -- Name of the queue that receives messages when pattern matches
+        CONSTRAINT topic_bindings_meta_queue_name_fk
+            REFERENCES pgmq.meta (queue_name)
+            ON DELETE CASCADE,
+    compiled_regex text GENERATED ALWAYS AS (
+        -- Pre-compile the pattern to regex for faster matching
+        -- This avoids runtime compilation on every send_topic call
+        '^' ||
+        replace(
+                replace(
+                        regexp_replace(pattern, '([.+?{}()|\[\]\\^$])', '\\\1', 'g'),
+                        '*', '[^.]+'
+                ),
+                '#', '.*'
+        ) || '$'
+        ) STORED,                 -- Computed column: stores the compiled regex pattern
+    CONSTRAINT topic_bindings_unique_pattern_queue UNIQUE (pattern, queue_name)
+);
+
+-- Create covering index for better performance when scanning patterns
+-- Includes queue_name and compiled_regex to allow index-only scans (no table access needed)
+CREATE INDEX IF NOT EXISTS idx_topic_bindings_covering ON pgmq.topic_bindings (pattern) INCLUDE (queue_name, compiled_regex);
+
 -- Allow pgmq.meta to be dumped by `pg_dump` when pgmq is installed as an extension
 DO
 $$
@@ -1580,32 +1606,6 @@ BEGIN
   DELETE FROM pgmq.notify_insert_throttle nit WHERE nit.queue_name = v_queue_name;
 END;
 $$ LANGUAGE plpgsql;
-
-CREATE TABLE IF NOT EXISTS pgmq.topic_bindings
-(
-    pattern        text NOT NULL, -- Wildcard pattern for routing key matching (* = one segment, # = zero or more segments)
-    queue_name     text NOT NULL  -- Name of the queue that receives messages when pattern matches
-        CONSTRAINT topic_bindings_meta_queue_name_fk
-            REFERENCES pgmq.meta (queue_name)
-            ON DELETE CASCADE,
-    compiled_regex text GENERATED ALWAYS AS (
-        -- Pre-compile the pattern to regex for faster matching
-        -- This avoids runtime compilation on every send_topic call
-        '^' ||
-        replace(
-                replace(
-                        regexp_replace(pattern, '([.+?{}()|\[\]\\^$])', '\\\1', 'g'),
-                        '*', '[^.]+'
-                ),
-                '#', '.*'
-        ) || '$'
-        ) STORED,                 -- Computed column: stores the compiled regex pattern
-    CONSTRAINT topic_bindings_unique_pattern_queue UNIQUE (pattern, queue_name)
-);
-
--- Create covering index for better performance when scanning patterns
--- Includes queue_name and compiled_regex to allow index-only scans (no table access needed)
-CREATE INDEX IF NOT EXISTS idx_topic_bindings_covering ON pgmq.topic_bindings (pattern) INCLUDE (queue_name, compiled_regex);
 
 CREATE OR REPLACE FUNCTION pgmq.validate_routing_key(routing_key text)
     RETURNS boolean
