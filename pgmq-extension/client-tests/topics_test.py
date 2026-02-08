@@ -1076,5 +1076,180 @@ class TestSendTopic:
             drop_queue(db_connection, queue_api_errors)
 
 
+# =============================================================================
+# Tests for regex injection protection
+# =============================================================================
+
+
+class TestRegexInjection:
+    """Tests for regex injection protection in pattern validation and compiled regex.
+
+    Ensures that:
+    1. Regex metacharacters are rejected by the pattern/routing key validators
+    2. The compiled_regex column properly escapes dots to literal matchers
+    3. Routing behavior treats dots and hyphens as literal characters
+    """
+
+    # --- Pattern validation: reject regex metacharacters ---
+
+    def test_pattern_rejects_parentheses(self, db_connection: psycopg.Connection):
+        """Test that parentheses (regex grouping) are rejected in patterns."""
+        with pytest.raises(psycopg.errors.RaiseException) as exc_info:
+            with db_connection.cursor() as cur:
+                cur.execute("SELECT pgmq.validate_topic_pattern('logs.(foo|bar)')")
+        assert "invalid characters" in str(exc_info.value)
+
+    def test_pattern_rejects_square_brackets(self, db_connection: psycopg.Connection):
+        """Test that square brackets (regex character class) are rejected in patterns."""
+        with pytest.raises(psycopg.errors.RaiseException) as exc_info:
+            with db_connection.cursor() as cur:
+                cur.execute("SELECT pgmq.validate_topic_pattern('logs.[error]')")
+        assert "invalid characters" in str(exc_info.value)
+
+    def test_pattern_rejects_dollar(self, db_connection: psycopg.Connection):
+        """Test that dollar sign (regex end anchor) is rejected in patterns."""
+        with pytest.raises(psycopg.errors.RaiseException) as exc_info:
+            with db_connection.cursor() as cur:
+                cur.execute("SELECT pgmq.validate_topic_pattern('logs.error$')")
+        assert "invalid characters" in str(exc_info.value)
+
+    # --- Routing key validation: reject regex metacharacters ---
+
+    def test_routing_key_rejects_regex_metacharacters(
+        self, db_connection: psycopg.Connection
+    ):
+        """Test that routing keys with regex metacharacters are rejected."""
+        with pytest.raises(psycopg.errors.RaiseException) as exc_info:
+            with db_connection.cursor() as cur:
+                cur.execute("SELECT pgmq.validate_routing_key('logs.(foo|bar)')")
+        assert "invalid characters" in str(exc_info.value)
+
+    # --- Compiled regex correctness ---
+
+    def test_compiled_regex_escapes_dots(self, db_connection: psycopg.Connection):
+        """Test that dots in patterns are escaped to literal dot matchers in compiled_regex."""
+        now = int(time.time())
+        queue_name = f"test_regex_dots_{now}"
+
+        try:
+            create_queue(db_connection, queue_name)
+            bind_topic(db_connection, "logs.error", queue_name)
+
+            with db_connection.cursor() as cur:
+                cur.execute(
+                    "SELECT compiled_regex FROM pgmq.topic_bindings "
+                    "WHERE pattern = 'logs.error' AND queue_name = %s",
+                    (queue_name,),
+                )
+                compiled = cur.fetchone()[0]
+                assert compiled == r"^logs\.error$", f"Expected ^logs\\.error$, got {compiled}"
+        finally:
+            drop_queue(db_connection, queue_name)
+
+    def test_compiled_regex_star_wildcard(self, db_connection: psycopg.Connection):
+        """Test that * compiles to [^.]+ (match one non-dot segment)."""
+        now = int(time.time())
+        queue_name = f"test_regex_star_{now}"
+
+        try:
+            create_queue(db_connection, queue_name)
+            bind_topic(db_connection, "logs.*", queue_name)
+
+            with db_connection.cursor() as cur:
+                cur.execute(
+                    "SELECT compiled_regex FROM pgmq.topic_bindings "
+                    "WHERE pattern = 'logs.*' AND queue_name = %s",
+                    (queue_name,),
+                )
+                compiled = cur.fetchone()[0]
+                assert compiled == r"^logs\.[^.]+$", f"Expected ^logs\\.[^.]+$, got {compiled}"
+        finally:
+            drop_queue(db_connection, queue_name)
+
+    def test_compiled_regex_hash_wildcard(self, db_connection: psycopg.Connection):
+        """Test that # compiles to .* (match zero or more of anything)."""
+        now = int(time.time())
+        queue_name = f"test_regex_hash_{now}"
+
+        try:
+            create_queue(db_connection, queue_name)
+            bind_topic(db_connection, "logs.#", queue_name)
+
+            with db_connection.cursor() as cur:
+                cur.execute(
+                    "SELECT compiled_regex FROM pgmq.topic_bindings "
+                    "WHERE pattern = 'logs.#' AND queue_name = %s",
+                    (queue_name,),
+                )
+                compiled = cur.fetchone()[0]
+                assert compiled == r"^logs\..*$", f"Expected ^logs\\..*$, got {compiled}"
+        finally:
+            drop_queue(db_connection, queue_name)
+
+    def test_compiled_regex_mixed_pattern(self, db_connection: psycopg.Connection):
+        """Test compiled regex for pattern with both * and # wildcards."""
+        now = int(time.time())
+        queue_name = f"test_regex_mixed_{now}"
+
+        try:
+            create_queue(db_connection, queue_name)
+            bind_topic(db_connection, "app.*.logs.#", queue_name)
+
+            with db_connection.cursor() as cur:
+                cur.execute(
+                    "SELECT compiled_regex FROM pgmq.topic_bindings "
+                    "WHERE pattern = 'app.*.logs.#' AND queue_name = %s",
+                    (queue_name,),
+                )
+                compiled = cur.fetchone()[0]
+                assert (
+                    compiled == r"^app\.[^.]+\.logs\..*$"
+                ), f"Unexpected compiled regex: {compiled}"
+        finally:
+            drop_queue(db_connection, queue_name)
+
+    # --- Behavioral tests: dots and hyphens treated as literal in routing ---
+
+    def test_dot_not_matching_arbitrary_characters(
+        self, db_connection: psycopg.Connection
+    ):
+        """Test that dots in patterns match only literal dots, not arbitrary characters."""
+        now = int(time.time())
+        queue_name = f"test_regex_dotlit_{now}"
+
+        try:
+            create_queue(db_connection, queue_name)
+            bind_topic(db_connection, "a.b", queue_name)
+
+            # 'aXb' should NOT match 'a.b' (dot is literal, not regex wildcard)
+            results = get_routing_matches(db_connection, "aXb")
+            assert len(results) == 0, "Dot in pattern should not match arbitrary characters"
+
+            # 'a.b' should match
+            results = get_routing_matches(db_connection, "a.b")
+            assert len(results) == 1, "Literal dot should match"
+        finally:
+            drop_queue(db_connection, queue_name)
+
+    def test_hyphen_in_pattern_safe(self, db_connection: psycopg.Connection):
+        """Test that hyphens in patterns are treated literally, not as regex range operators."""
+        now = int(time.time())
+        queue_name = f"test_regex_hyphen_{now}"
+
+        try:
+            create_queue(db_connection, queue_name)
+            bind_topic(db_connection, "my-app.logs.*", queue_name)
+
+            # Should match with literal hyphen
+            results = get_routing_matches(db_connection, "my-app.logs.error")
+            assert len(results) == 1, "Hyphen in pattern should match literally"
+
+            # Should NOT match when hyphen is replaced with different char
+            results = get_routing_matches(db_connection, "myXapp.logs.error")
+            assert len(results) == 0, "Hyphen should be literal, not match arbitrary chars"
+        finally:
+            drop_queue(db_connection, queue_name)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

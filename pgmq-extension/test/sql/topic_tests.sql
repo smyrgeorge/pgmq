@@ -232,6 +232,54 @@ EXCEPTION WHEN OTHERS THEN
 END $$;
 
 -- =============================================================================
+-- Tests for regex injection protection in validation
+-- =============================================================================
+
+-- test_pattern_rejects_parentheses (e.g., logs.(foo|bar))
+DO $$
+BEGIN
+    PERFORM pgmq.validate_topic_pattern('logs.(foo|bar)');
+    RAISE EXCEPTION 'Should have raised an error for parentheses in pattern';
+EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM NOT LIKE '%invalid characters%' THEN
+        RAISE EXCEPTION 'Expected invalid characters error, got: %', SQLERRM;
+    END IF;
+END $$;
+
+-- test_pattern_rejects_square_brackets
+DO $$
+BEGIN
+    PERFORM pgmq.validate_topic_pattern('logs.[error]');
+    RAISE EXCEPTION 'Should have raised an error for square brackets in pattern';
+EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM NOT LIKE '%invalid characters%' THEN
+        RAISE EXCEPTION 'Expected invalid characters error, got: %', SQLERRM;
+    END IF;
+END $$;
+
+-- test_pattern_rejects_dollar
+DO $$
+BEGIN
+    PERFORM pgmq.validate_topic_pattern('logs.error$');
+    RAISE EXCEPTION 'Should have raised an error for dollar sign in pattern';
+EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM NOT LIKE '%invalid characters%' THEN
+        RAISE EXCEPTION 'Expected invalid characters error, got: %', SQLERRM;
+    END IF;
+END $$;
+
+-- test_routing_key_rejects_regex_metacharacters
+DO $$
+BEGIN
+    PERFORM pgmq.validate_routing_key('logs.(foo|bar)');
+    RAISE EXCEPTION 'Should have raised an error for regex metacharacters in routing key';
+EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM NOT LIKE '%invalid characters%' THEN
+        RAISE EXCEPTION 'Expected invalid characters error, got: %', SQLERRM;
+    END IF;
+END $$;
+
+-- =============================================================================
 -- Tests for bind_topic() and unbind_topic()
 -- =============================================================================
 
@@ -348,6 +396,49 @@ SELECT pgmq.bind_topic('#', 'topic_queue_1');
 SELECT COUNT(*) = 1 FROM pgmq.test_routing('logs');
 SELECT COUNT(*) = 1 FROM pgmq.test_routing('logs.error');
 SELECT COUNT(*) = 1 FROM pgmq.test_routing('anything.at.all');
+DELETE FROM pgmq.topic_bindings;
+
+-- =============================================================================
+-- Tests for compiled_regex correctness (regex injection protection)
+-- =============================================================================
+
+-- test_compiled_regex_escapes_dots
+-- Verify that dots in patterns are compiled to literal dot matchers, not regex wildcards
+SELECT pgmq.bind_topic('logs.error', 'topic_queue_1');
+SELECT compiled_regex = '^logs\.error$' AS dot_properly_escaped
+FROM pgmq.topic_bindings WHERE pattern = 'logs.error' AND queue_name = 'topic_queue_1';
+DELETE FROM pgmq.topic_bindings;
+
+-- test_compiled_regex_for_star_wildcard
+SELECT pgmq.bind_topic('logs.*', 'topic_queue_1');
+SELECT compiled_regex = '^logs\.[^.]+$' AS star_compiled_correctly
+FROM pgmq.topic_bindings WHERE pattern = 'logs.*' AND queue_name = 'topic_queue_1';
+DELETE FROM pgmq.topic_bindings;
+
+-- test_compiled_regex_for_hash_wildcard
+SELECT pgmq.bind_topic('logs.#', 'topic_queue_1');
+SELECT compiled_regex = '^logs\..*$' AS hash_compiled_correctly
+FROM pgmq.topic_bindings WHERE pattern = 'logs.#' AND queue_name = 'topic_queue_1';
+DELETE FROM pgmq.topic_bindings;
+
+-- test_compiled_regex_for_mixed_pattern
+SELECT pgmq.bind_topic('app.*.logs.#', 'topic_queue_1');
+SELECT compiled_regex = '^app\.[^.]+\.logs\..*$' AS mixed_compiled_correctly
+FROM pgmq.topic_bindings WHERE pattern = 'app.*.logs.#' AND queue_name = 'topic_queue_1';
+DELETE FROM pgmq.topic_bindings;
+
+-- test_dot_not_matching_arbitrary_characters
+-- Pattern 'a.b' should NOT match routing key 'aXb' (dot must be literal)
+SELECT pgmq.bind_topic('a.b', 'topic_queue_1');
+SELECT COUNT(*) = 0 AS dot_is_literal FROM pgmq.test_routing('aXb');
+SELECT COUNT(*) = 1 AS literal_dot_matches FROM pgmq.test_routing('a.b');
+DELETE FROM pgmq.topic_bindings;
+
+-- test_hyphen_in_pattern_safe
+-- Hyphens should be treated literally, not as regex range operators
+SELECT pgmq.bind_topic('my-app.logs.*', 'topic_queue_1');
+SELECT COUNT(*) = 1 AS hyphen_pattern_works FROM pgmq.test_routing('my-app.logs.error');
+SELECT COUNT(*) = 0 AS hyphen_is_literal FROM pgmq.test_routing('myXapp.logs.error');
 DELETE FROM pgmq.topic_bindings;
 
 -- =============================================================================
